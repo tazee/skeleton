@@ -20,6 +20,8 @@
 #include <lxsdk/lx_pmodel.hpp>
 #include <lxsdk/lx_vmodel.hpp>
 #include <lxsdk/lx_channelui.hpp>
+#include <lxsdk/lx_draw.hpp>
+#include <lxsdk/lx_handles.hpp>
 
 #include <lxsdk/lx_value.hpp>
 #include <lxsdk/lx_select.hpp>
@@ -38,6 +40,7 @@ using namespace lx_err;
 #define ATTRs_STEPS  "steps"
 #define ATTRs_HEIGHT "height"
 #define ATTRs_SCALE  "scale"
+#define ATTRs_MERGE  "merge"
 
 #define ATTRa_MODE     0
 #define ATTRa_OFFSET   1
@@ -45,6 +48,7 @@ using namespace lx_err;
 #define ATTRa_STEPS    3
 #define ATTRa_HEIGHT   4
 #define ATTRa_SCALE    5
+#define ATTRa_MERGE    6
 
 #ifndef LXx_OVERRIDE
 #define LXx_OVERRIDE override
@@ -67,6 +71,8 @@ class CToolOp : public CLxImpl_ToolOperation, public CLxImpl_MeshElementGroup
         LxResult    eltgrp_TestEdge(unsigned int index, LXtEdgeID edge)	LXx_OVERRIDE;
         LxResult    eltgrp_TestPoint(unsigned int index, LXtPointID point)	LXx_OVERRIDE;
 
+        void        SetElementGroup(CVisitor& vis);
+
         CLxUser_FalloffPacket falloff;
         CLxUser_Subject2Packet subject;
 
@@ -74,6 +80,7 @@ class CToolOp : public CLxImpl_ToolOperation, public CLxImpl_MeshElementGroup
         unsigned offset_screen;
         unsigned offset_falloff;
         unsigned offset_subject;
+        unsigned offset_input;
 
         int    m_mode;
         double m_offset;
@@ -81,14 +88,16 @@ class CToolOp : public CLxImpl_ToolOperation, public CLxImpl_MeshElementGroup
         int    m_steps;
         double m_height;
         double m_scale;
+        int    m_merge;
     
         CLxUser_Edge m_cedge;
         std::unordered_set<LXtPointID> m_point_set;
         std::unordered_set<LXtPolygonID> m_polygon_set;
+        std::unordered_set<LXtPolygonID> m_sidepoly_set;
 };
 
 /*
- * CDT triangulation tool operator. Basic tool and tool model methods are defined here. The
+ * Straight-skeleton tool operator. Basic tool and tool model methods are defined here. The
  * attributes interface is inherited from the utility class.
  */
 
@@ -105,12 +114,20 @@ public:
 
     unsigned    tmod_Flags() LXx_OVERRIDE;
     LxResult    tmod_Enable(ILxUnknownID obj) LXx_OVERRIDE;
+	void		tmod_Draw       (ILxUnknownID vts, ILxUnknownID stroke, int flags) LXx_OVERRIDE;
+	void		tmod_Test       (ILxUnknownID vts, ILxUnknownID stroke, int flags) LXx_OVERRIDE;
     LxResult    tmod_Down(ILxUnknownID vts, ILxUnknownID adjust) LXx_OVERRIDE;
     void        tmod_Move(ILxUnknownID vts, ILxUnknownID adjust) LXx_OVERRIDE;
+    void        tmod_Up(ILxUnknownID vts, ILxUnknownID adjust) LXx_OVERRIDE;
 
     using CLxDynamicAttributes::atrui_UIHints;  // to distinguish from the overloaded version in CLxImpl_AttributesUI
 
-    void atrui_UIHints2(unsigned int index, CLxUser_UIHints& hints) LXx_OVERRIDE;
+    void        atrui_UIHints2(unsigned int index, CLxUser_UIHints& hints) LXx_OVERRIDE;
+    LxResult	atrui_DisableMsg (unsigned int index, ILxUnknownID msg) LXx_OVERRIDE;
+
+    LxResult    cui_Enabled           (const char *channelName, ILxUnknownID msg, ILxUnknownID item, ILxUnknownID read)	LXx_OVERRIDE;
+    LxResult    cui_DependencyCount   (const char *channelName, unsigned *count) LXx_OVERRIDE;
+    LxResult    cui_DependencyByIndex (const char *channelName, unsigned index, LXtItemType *depItemType, const char **depChannelName) LXx_OVERRIDE;
 
     bool TestPolygon();
 
@@ -123,11 +140,15 @@ public:
     unsigned offset_screen;
     unsigned offset_falloff;
     unsigned offset_subject;
+    unsigned offset_input;
+    unsigned offset_event;
+	unsigned offset_center;
     unsigned mode_select;
 	
 	LXtItemType m_itemType;
 
     static LXtTagInfoDesc descInfo[];
-    double m_offset0, m_offset;
+    double m_offset0, m_height0, m_shift0;
+    int     m_part;
 };
 

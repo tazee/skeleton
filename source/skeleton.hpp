@@ -18,11 +18,14 @@
 #include <vector>
 #include <unordered_set>
 
+#include "util.hpp"
+
 enum EditMode : int
 {
     Skeleton = 0,
     Extrude = 1,
     Duplicate = 2,
+    Offset = 3,
 };
 
 struct CSkeleton
@@ -34,6 +37,7 @@ struct CSkeleton
         m_steps  = 1;
         m_height = 0.0;
         m_scale  = 1.0;
+        m_merge  = 1;
     }
     void SetMesh(CLxUser_Mesh& edit_mesh, CLxUser_Mesh& base_mesh)
     {
@@ -50,12 +54,17 @@ struct CSkeleton
     //
     // Extrude polygon using straight-skeleton algorithm without crossing edges.
     //
-    LxResult Extrude(CLxUser_Polygon& polygon, std::vector<LXtPolygonID>& pols);
+    LxResult Extrude(CLxUser_Polygon& polygon, std::vector<LXtPolygonID>& pols, std::vector<LXtPolygonID>& sides);
 
     //
     // Create offset polygon using straight-skeleton algorithm.
     //
     LxResult Duplicate(CLxUser_Polygon& polygon, std::vector<LXtPolygonID>& pols);
+
+    //
+    // Offset polygon using straight-skeleton algorithm.
+    //
+    LxResult Offset(CLxUser_Polygon& polygon, std::vector<LXtPolygonID>& pols);
 
     CLxUser_Mesh        m_mesh;
     CLxUser_PolygonEdit m_poledit;
@@ -67,126 +76,7 @@ struct CSkeleton
     int    m_steps;      // Number of step
     double m_height;     // Height of the roof
     double m_scale;      // Scale of the height
-};
-
-
-struct AxisPlane
-{
-    AxisPlane(const LXtVector vec)
-    {
-        static const unsigned axis0[] = { 1, 2, 0 };
-        static const unsigned axis1[] = { 2, 0, 1 };
-
-        m_axis = MaxExtent(vec);
-        m_ix   = axis0[m_axis];
-        m_iy   = axis1[m_axis];
-
-        LXtVector norm;
-        LXx_VUNIT(norm, m_axis);
-        lx::MatrixIdent(m_m);
-        if (VectorEqual(vec, norm) == false)
-        {
-            VectorRotation(m_m, vec, norm);
-        }
-        lx::MatrixCopy(m_mInv, m_m);
-        lx::MatrixTranspose(m_mInv);
-    }
-
-    void ToPlane(const LXtFVector pos, double& x, double& y, double& z)
-    {
-        LXtFVector r;
-        lx::MatrixMultiply(r, m_m, pos);
-        x = r[m_ix];
-        y = r[m_iy];
-        z = r[m_axis];
-    }
-
-    void FromPlane(LXtVector pos, double x, double y, double z)
-    {
-        LXtVector r;
-        r[m_ix]   = x;
-        r[m_iy]   = y;
-        r[m_axis] = z;
-        lx::MatrixMultiply(pos, m_mInv, r);
-    }
-
-    unsigned MaxExtent(const LXtVector v)
-    {
-        double a = std::abs(v[0]);
-        double b = std::abs(v[1]);
-        double c = std::abs(v[2]);
-        if (a > b && a > c)
-            return 0;
-        else if (b >= a && b > c)
-            return 1;
-        else
-            return 2;
-    }
-
-    bool VectorEqual(const LXtVector a, const LXtVector b)
-    {
-        for (auto i = 0u; i < LXdND; i++)
-        {
-            if (lx::Compare(a[i], b[i]))
-                return false;
-        }
-        return true;
-    }
-
-    double AngleVectors(const LXtVector v0, const LXtVector v1)
-    {
-        double vlen0, vlen1, x;
-
-        vlen0 = LXx_VLEN(v0);
-        vlen1 = LXx_VLEN(v1);
-        if (vlen0 < lx::Tolerance(vlen0) || vlen1 < lx::Tolerance(vlen1))
-            return 0.0;
-        x = LXx_VDOT(v0, v1) / vlen0 / vlen1;
-        x = LXxCLAMP(x, -1.0, 1.0);
-        return std::acos(x);
-    }
-
-    void VectorRotation(LXtMatrix m, const LXtVector v0, const LXtVector v1)
-    {
-        LXtVector vo;
-        double    qq[4];
-
-        if (VectorEqual(v0, v1))
-        {
-            lx::MatrixIdent(m);
-            return;
-        }
-
-        LXx_VCROSS(vo, v1, v0);
-        double theta = AngleVectors(v1, v0);
-        if (std::abs(theta) < lx::Tolerance(theta))
-        {
-            lx::MatrixIdent(m);
-            return;
-        }
-        if (!lx::VectorNormalize(vo))
-        {
-            qq[0] = 0.0;
-            qq[1] = std::sin(theta / 2);
-            qq[2] = 0.0;
-            qq[3] = std::cos(theta / 2);
-        }
-        else
-        {
-            double sint = sin(theta / 2);
-            qq[0]       = sint * vo[0];
-            qq[1]       = sint * vo[1];
-            qq[2]       = sint * vo[2];
-            qq[3]       = std::cos(theta / 2);
-        }
-        CLxQuaternion quat(qq);
-        quat.normalize();
-        CLxMatrix4 m4 = quat.asMatrix();
-        m4.getMatrix3x3(m);
-    }
-
-    unsigned  m_axis, m_ix, m_iy;
-    LXtMatrix m_m, m_mInv;
+    int    m_merge;      // Merge the vertices for Offset
 };
 
 
@@ -202,6 +92,7 @@ public:
     bool               succeeded;
 
     std::vector<LXtPolygonID> top_polygons;     // result extruded polygons
+    std::vector<LXtPolygonID> side_polygons;    // side polygons from extrude mode
 
     CVisitor()
     {
@@ -298,7 +189,6 @@ public:
     {
         unsigned nvert;
         m_poly.VertexCount(&nvert);
-        s_log.DebugOut(LXi_DBLOG_NORMAL, "polygon ID %p nvert = %u", m_poly.ID(), nvert);
         if (nvert < 3)
             return LXe_OK;
 
@@ -320,9 +210,11 @@ public:
         if (m_mode == Skeleton)
             result = m_skeleton.Skeleton(m_poly, top_polygons);
         else if (m_mode == Extrude)
-            result = m_skeleton.Extrude(m_poly, top_polygons);
+            result = m_skeleton.Extrude(m_poly, top_polygons, side_polygons);
         else if (m_mode == Duplicate)
             result = m_skeleton.Duplicate(m_poly, top_polygons);
+        else if (m_mode == Offset)
+            result = m_skeleton.Offset(m_poly, top_polygons);
     
         // check the result
         if (result != LXe_OK)

@@ -115,12 +115,6 @@ install(
 )
 install(
     DIRECTORY
-        "Icons"
-    DESTINATION
-        ${CMAKE_INSTALL_PREFIX}
-)
-install(
-    DIRECTORY
         "images"
     DESTINATION
         ${CMAKE_INSTALL_PREFIX}
