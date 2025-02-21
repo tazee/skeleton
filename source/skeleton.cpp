@@ -349,6 +349,7 @@ LxResult CSkeleton::Extrude(CLxUser_Polygon& polygon, std::vector<LXtPolygonID>&
         std::cout << "v:" << v << ")\n";
         printf("point %f %f %f\n", mesh.point(v).x(), mesh.point(v).y(), mesh.point(v).z());
 
+#if 0
         auto halfedge = mesh.halfedge(v); // 頂点に関連付けられたハーフエッジを取得
         CGAL::Halfedge_around_target_circulator<SurfaceMesh> circulator(halfedge, mesh), done(circulator);
         do {
@@ -362,6 +363,7 @@ LxResult CSkeleton::Extrude(CLxUser_Polygon& polygon, std::vector<LXtPolygonID>&
                 mesh.point(t).x(), mesh.point(t).y(), mesh.point(t).z());
             ++circulator; // 次のハーフエッジへ移動
         } while (circulator != done); // 循環終了条件
+#endif
     }
 
     bool is_opened = MeshUtil::PolygonIsOpened(m_mesh, polygon);
@@ -796,16 +798,17 @@ LxResult CSkeleton::Inset(CLxUser_Polygon& polygon, std::vector<LXtPolygonID>& p
     // Set axis plane to compute the triangulation on 2D space.
     AxisPlane axisPlane(norm);
 
+    // Get the source points of the polygon and split it into the outer boundary and holes
     std::vector<LXtPointID> source;
-
     std::vector<std::vector<LXtPointID>> loops;
     MeshUtil::MakeBoundaryVertexList(m_mesh, polygon, source, loops);
 
     Polygon_with_holes_2 poly;
 
+    // Create a polygon with holes on 2D space for CGAL algorithm
     auto total_points = source.size();
+    double z_ave = 0.0;
 
-    double   z_ave = 0.0;
     for (auto i = 0u; i < source.size(); i++)
     {
         point.Select(source[i]);
@@ -815,7 +818,7 @@ LxResult CSkeleton::Inset(CLxUser_Polygon& polygon, std::vector<LXtPolygonID>& p
         axisPlane.ToPlane(pos, x, y, z);
         poly.outer_boundary().push_back(Point_2(x, y));
         z_ave += z;
-        printf("[%u] source %f %f %f vert.new %f %f %f\n", i, x, y, z, pos[0], pos[1], pos[2]);
+        //printf("[%u] source %f %f %f vert.new %f %f %f\n", i, x, y, z, pos[0], pos[1], pos[2]);
     }
 
     // averaged z value on axis plane
@@ -837,28 +840,35 @@ LxResult CSkeleton::Inset(CLxUser_Polygon& polygon, std::vector<LXtPolygonID>& p
         total_points += loop.size();
     }
 
+    // Create a straight skeleton and subdivide the polygon
     SurfaceMesh mesh;
     CGAL::extrude_skeleton(poly, mesh, CGAL::parameters::maximum_height(m_offset));
 
+    // All vertices of the inset polygon
     std::vector<LXtPointID> vertices;
 
+    // Set the search tolerance for the co-located vertices to merge
     if (m_merge)
     {
         double tol = lx::Tolerance(m_offset);
         m_poledit.SetSearch(1, tol);
     }
 
+    // Store skeleton vertices for the source points of the polygon
     auto track = -1;
+    std::vector<CGAL::SM_Vertex_index> sm_source_verices;
 
     double z_max = 0.0;
     for (auto v : mesh.vertices())
     {
         if (lx::Compare(mesh.point(v).z(), z_max) > 0)
             z_max = mesh.point(v).z();
+        if (sm_source_verices.size() < total_points)
+            sm_source_verices.push_back(v);
     }
 
-    printf("** Inset start z_max %f\n", z_max);
-    for (auto v : mesh.vertices())
+    printf("** Inset start z_max %f sm_source_verices = %zu\n", z_max, sm_source_verices.size());
+    for (auto v : sm_source_verices)
     {
         LXtPointID pntID;
         LXtVector pos1;
@@ -950,7 +960,7 @@ LxResult CSkeleton::Inset(CLxUser_Polygon& polygon, std::vector<LXtPolygonID>& p
                 }
             }
 
-            printf("update %d vt0 (%d) vt (%d)\n", updated, v0.idx(), vt.idx());
+            //printf("update %d vt0 (%d) vt (%d)\n", updated, v0.idx(), vt.idx());
             if (updated == false)
                 break;
             
@@ -967,10 +977,6 @@ LxResult CSkeleton::Inset(CLxUser_Polygon& polygon, std::vector<LXtPolygonID>& p
         axisPlane.FromPlane(pos1, mesh.point(vt).x(), mesh.point(vt).y(), z_ave);
         m_poledit.NewVertex(pos1, &pntID);
         vertices.push_back(pntID);
-
-        // Top vertices in vertices comes from the source vertices of the polygon
-        if (vertices.size() == total_points)
-            break;
     }
 
     // Split the inset vertices into the outer vertices and the loop vertices
@@ -1011,6 +1017,7 @@ LxResult CSkeleton::Inset(CLxUser_Polygon& polygon, std::vector<LXtPolygonID>& p
         if (outer.size() > 2)
         {
             printf("** top polygons = %zu\n", outer.size());
+        //    FixStartPoint(m_mesh, polygon, outer);
             polygon.NewProto(type, outer.data(), outer.size(), 0, &polyID);
             pols.push_back(polyID);
         }
@@ -1050,33 +1057,6 @@ LxResult CSkeleton::Inset(CLxUser_Polygon& polygon, std::vector<LXtPolygonID>& p
         polygon.NewProto(type, keyhole.data(), keyhole.size(), 0, &polyID);
         pols.push_back(polyID);
     }
-
-#if 0
-    for (auto v : mesh.vertices())
-    {
-        LXtPointID pntID;
-        LXtVector  pos;
-        axisPlane.FromPlane(pos, mesh.point(v).x(), mesh.point(v).y(), mesh.point(v).z() * m_scale + z_ave);
-        m_poledit.NewVertex(pos, &pntID);
-        vertices[v] = pntID;
-        std::cout << "v:" << v << ")\n";
-        printf("point %f %f %f\n", mesh.point(v).x(), mesh.point(v).y(), mesh.point(v).z());
-
-        auto halfedge = mesh.halfedge(v); // 頂点に関連付けられたハーフエッジを取得
-        CGAL::Halfedge_around_target_circulator<SurfaceMesh> circulator(halfedge, mesh), done(circulator);
-        do {
-            // ハーフエッジ情報を出力
-            auto s = mesh.source(*circulator); // 始点の頂点
-            auto t = mesh.source(*circulator);
-
-            std::cout << "s:" << s << "t:" << t << "\n";
-            printf("halfedge source %f %f %f target %f %f %f\n", 
-                mesh.point(s).x(), mesh.point(s).y(), mesh.point(s).z(),
-                mesh.point(t).x(), mesh.point(t).y(), mesh.point(t).z());
-            ++circulator; // 次のハーフエッジへ移動
-        } while (circulator != done); // 循環終了条件
-    }
-#endif
 
     polygon.Remove();
 
