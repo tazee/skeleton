@@ -165,6 +165,118 @@ LxResult CSkeleton::Skeleton(CLxUser_Polygon& polygon, std::vector<LXtPolygonID>
     return LXe_OK;
 }
 
+
+static bool MergeLoops(std::vector<LXtPointID>& target, std::vector<LXtPointID>& loop)
+{
+    for (auto i = 0u; i < target.size(); i++)
+    {
+        auto i0 = (i + 1) % target.size();
+        for (auto j = 0u; j < loop.size(); j++)
+        {
+            if ((target[i] == loop[(j + 1) % loop.size()]) && (target[i0] == loop[j]))
+            {
+                auto j0 = (j + 2) % loop.size();
+                auto n0 = loop.size() - 2;
+                std::vector<LXtPointID> connect;
+                connect.resize(n0);
+                for (auto k = 0; k < n0; k++)
+                    connect[k] = loop[(j0 + k) % loop.size()];
+                target.insert(target.begin() + i0, connect.begin(), connect.end());
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+
+static void FixStartPoint(CLxUser_Mesh& mesh, CLxUser_Polygon& polygon, std::vector<LXtPointID>& points)
+{
+    LXtVector norm;
+    polygon.Normal(norm);
+    CLxVector cnorm(norm);
+    std::vector<CLxVector> vecs;
+
+    CLxUser_Point point;
+    point.fromMesh(mesh);
+    for (auto i = 0u; i < points.size(); i++)
+    {
+        point.Select(points[i]);
+        LXtFVector pos;
+        point.Pos(pos);
+        vecs.push_back(CLxVector(pos));
+    }
+    for (auto i = 0u; i < vecs.size(); i++)
+    {
+        CLxVector v0 = vecs[(i + 1) % vecs.size()] - vecs[i];
+        CLxVector v1 = vecs[(i + vecs.size() - 1) % vecs.size()] - vecs[i];
+        CLxVector cross = v0.cross(v1);
+        if (cross.dot(cnorm) > 0.0)
+        {
+            if (i != 0)
+            {
+                std::vector<LXtPointID> points1;
+                for (auto j = 0u; j < points.size(); j++)
+                {
+                    points1.push_back(points[(j + i) % points.size()]);
+                }
+                points.clear();
+                points = points1;
+            }
+            return;
+        }
+    }
+}
+
+
+static void MergePolygons(CLxUser_Mesh& mesh, CLxUser_Polygon& polygon, std::vector<std::vector<LXtPointID>>& top_polys, std::vector<LXtPolygonID>& pols)
+{
+    printf("MergePolygons = %lu\n", top_polys.size());
+    while (top_polys.size() > 0)
+    {
+        std::vector<LXtPointID> points(top_polys[0].begin(), top_polys[0].end());
+        top_polys.erase(top_polys.begin());
+        printf("** pop points = %lu top_polys = %lu\n", points.size(), top_polys.size());
+
+        while (top_polys.size() > 0)
+        {
+            bool connected = false;
+            for (auto i = 0u; i < top_polys.size(); i++)
+            {
+                if (MergeLoops(points, top_polys[i]))
+                {
+                    top_polys.erase(top_polys.begin() + i);
+                    connected = true;
+                }
+            }
+            if (connected == false)
+            {
+#if 0
+                printf("-- no connect top_polys = %zu\n", top_polys.size());
+                for (auto j = 0u; j < points.size(); j++)
+                    printf("[%u] target point %p\n", j, points[j]);
+                for (auto i = 0u; i < top_polys.size(); i++)
+                {
+                    printf("[%u] top_polys = %zu\n", i, top_polys[i].size());
+                    for (auto j = 0u; j < top_polys[i].size(); j++)
+                        printf("\t[%u] loop point %p\n", j, top_polys[i][j]);
+                }
+#endif
+                break;
+            }
+        }
+
+        if (points.size() > 2)
+        {
+            LXtPolygonID polyID;
+            FixStartPoint(mesh, polygon, points);
+            polygon.NewProto(LXiPTYP_FACE, points.data(), points.size(), false, &polyID);
+            printf("NewPolygon %p nvert = %zu\n", polyID, points.size());
+            pols.push_back(polyID);
+        }
+    }
+}
+
 //
 // Extrude the given polygon using CGAL::extrude_skeleton method.
 //
@@ -226,6 +338,7 @@ LxResult CSkeleton::Extrude(CLxUser_Polygon& polygon, std::vector<LXtPolygonID>&
     std::vector<LXtPointID> vertices;
     vertices.resize(mesh.number_of_vertices());
 
+    printf("mesh vertices = %lu\n", mesh.vertices().size());
     for (auto v : mesh.vertices())
     {
         LXtPointID pntID;
@@ -233,9 +346,27 @@ LxResult CSkeleton::Extrude(CLxUser_Polygon& polygon, std::vector<LXtPolygonID>&
         axisPlane.FromPlane(pos, mesh.point(v).x(), mesh.point(v).y(), mesh.point(v).z() * m_scale + z_ave);
         m_poledit.NewVertex(pos, &pntID);
         vertices[v] = pntID;
+        std::cout << "v:" << v << ")\n";
+        printf("point %f %f %f\n", mesh.point(v).x(), mesh.point(v).y(), mesh.point(v).z());
+
+        auto halfedge = mesh.halfedge(v); // 頂点に関連付けられたハーフエッジを取得
+        CGAL::Halfedge_around_target_circulator<SurfaceMesh> circulator(halfedge, mesh), done(circulator);
+        do {
+            // ハーフエッジ情報を出力
+            auto s = mesh.source(*circulator); // 始点の頂点
+            auto t = mesh.source(*circulator);
+
+            std::cout << "s:" << s << "t:" << t << "\n";
+            printf("halfedge source %f %f %f target %f %f %f\n", 
+                mesh.point(s).x(), mesh.point(s).y(), mesh.point(s).z(),
+                mesh.point(t).x(), mesh.point(t).y(), mesh.point(t).z());
+            ++circulator; // 次のハーフエッジへ移動
+        } while (circulator != done); // 循環終了条件
     }
 
     bool is_opened = MeshUtil::PolygonIsOpened(m_mesh, polygon);
+    bool merge_top = true;
+    std::vector<std::vector<LXtPointID>> top_polys;
 
     for (auto f : mesh.faces())
     {
@@ -248,12 +379,18 @@ LxResult CSkeleton::Extrude(CLxUser_Polygon& polygon, std::vector<LXtPolygonID>&
                 btmCount++;
             total++;
         }
-        if ((is_opened == false) && (btmCount == total))
+        if (btmCount == total)
             continue;
         std::vector<LXtPointID> points;
         for (auto v : mesh.vertices_around_face(mesh.halfedge(f)))
         {
             points.push_back(vertices[v]);
+        }
+
+        if (merge_top && (topCount == total))
+        {
+            top_polys.push_back(points);
+            continue;
         }
 
         LXtPolygonID polyID;
@@ -262,6 +399,27 @@ LxResult CSkeleton::Extrude(CLxUser_Polygon& polygon, std::vector<LXtPolygonID>&
             pols.push_back(polyID);
         else if (btmCount != total)
             sides.push_back(polyID);
+    }
+
+    if (merge_top)
+    {
+        MergePolygons(m_mesh, polygon, top_polys, pols);
+    }
+
+    if (is_opened == false)
+        polygon.Remove();
+    else
+    {
+        source.clear();
+        unsigned nvert;
+        polygon.VertexCount(&nvert);
+        for (auto i = 0u; i < nvert; i++)
+        {
+            LXtPointID vrt;
+            polygon.VertexByIndex(i, &vrt);
+            source.push_back(vrt);
+        }
+        polygon.SetVertexList(source.data(), source.size(), 1);
     }
 
     return LXe_OK;
@@ -593,6 +751,334 @@ LxResult CSkeleton::Offset(CLxUser_Polygon& polygon, std::vector<LXtPolygonID>& 
     }
 
     pols.push_back(polygon.ID());
+
+    return LXe_OK;
+}
+
+
+static void SplitInsetVertices(std::vector<LXtPointID>& vertices, std::vector<LXtPointID>& source, std::vector<std::vector<LXtPointID>>& loops, std::vector<LXtPointID>& inset_outer, std::vector<std::vector<LXtPointID>>& inset_loops)
+{
+    inset_outer.clear();
+    inset_loops.clear();
+    for (auto i = 0; i < source.size(); i++)
+    {
+        inset_outer.push_back(vertices[i]);
+    }
+    auto offset = source.size();
+    for (auto& loop : loops)
+    {
+        std::vector<LXtPointID> inset_loop;
+        for (auto i = 0; i < loop.size(); i++)
+        {
+            inset_loop.push_back(vertices[i + offset]);
+        }
+        inset_loops.push_back(inset_loop);
+        offset += loop.size();
+    }
+}
+
+//
+// Inset the given polygon using CGAL::extrude_skeleton method.
+//
+LxResult CSkeleton::Inset(CLxUser_Polygon& polygon, std::vector<LXtPolygonID>& pols, std::vector<LXtPolygonID>& sides)
+{
+    if (m_offset <= 0.0)
+        return LXe_OK;
+
+    printf("** Inset start merge = %d offset = %f\n", m_merge, m_offset);
+    CLxUser_Point point, point1;
+    point.fromMesh(m_mesh);
+    point1.fromMesh(m_mesh);
+
+    LXtVector norm;
+    polygon.Normal(norm);
+
+    // Set axis plane to compute the triangulation on 2D space.
+    AxisPlane axisPlane(norm);
+
+    std::vector<LXtPointID> source;
+
+    std::vector<std::vector<LXtPointID>> loops;
+    MeshUtil::MakeBoundaryVertexList(m_mesh, polygon, source, loops);
+
+    Polygon_with_holes_2 poly;
+
+    auto total_points = source.size();
+
+    double   z_ave = 0.0;
+    for (auto i = 0u; i < source.size(); i++)
+    {
+        point.Select(source[i]);
+        LXtFVector pos;
+        point.Pos(pos);
+        double x, y, z;
+        axisPlane.ToPlane(pos, x, y, z);
+        poly.outer_boundary().push_back(Point_2(x, y));
+        z_ave += z;
+        printf("[%u] source %f %f %f vert.new %f %f %f\n", i, x, y, z, pos[0], pos[1], pos[2]);
+    }
+
+    // averaged z value on axis plane
+    z_ave /= static_cast<double>(source.size());
+
+    for (auto& loop : loops)
+    {
+        Polygon_2 hole;
+        for (auto i = 0u; i < loop.size(); i++)
+        {
+            point.Select(loop[i]);
+            LXtFVector pos;
+            point.Pos(pos);
+            double x, y, z;
+            axisPlane.ToPlane(pos, x, y, z);
+            hole.push_back(Point_2(x, y));
+        }
+        poly.add_hole(hole);
+        total_points += loop.size();
+    }
+
+    SurfaceMesh mesh;
+    CGAL::extrude_skeleton(poly, mesh, CGAL::parameters::maximum_height(m_offset));
+
+    std::vector<LXtPointID> vertices;
+
+    if (m_merge)
+    {
+        double tol = lx::Tolerance(m_offset);
+        m_poledit.SetSearch(1, tol);
+    }
+
+    auto track = -1;
+
+    double z_max = 0.0;
+    for (auto v : mesh.vertices())
+    {
+        if (lx::Compare(mesh.point(v).z(), z_max) > 0)
+            z_max = mesh.point(v).z();
+    }
+
+    printf("** Inset start z_max %f\n", z_max);
+    for (auto v : mesh.vertices())
+    {
+        LXtPointID pntID;
+        LXtVector pos1;
+
+        // target vertex started from source point of the polygon
+        // all tracing vertices are stored in trace_list
+        auto vt = v;
+        std::vector<CGAL::SM_Vertex_index> trace_list(vt);
+    
+        while (lx::Compare(mesh.point(vt).z(), z_max) < 0)
+        {
+            bool updated = false;
+            if (vertices.size() == track)
+            {
+                axisPlane.FromPlane(pos1, mesh.point(vt).x(), mesh.point(vt).y(), z_ave);
+                printf("(%zu) new branch v0 (%u) z_max %f vt %f %f %f vert.new %f %f %f\n", 
+                    vertices.size(),  vt.idx(), z_max,
+                    mesh.point(vt).x(), mesh.point(vt).y(), mesh.point(vt).z(), pos1[0], pos1[1], pos1[2]);
+            }
+
+            auto halfedge = mesh.halfedge(vt); // Get halfedge associated to the given vertex
+            CGAL::Halfedge_around_target_circulator<SurfaceMesh> circulator(halfedge, mesh), done(circulator);
+
+            auto v0 = vt;   // the beginning of the branch
+            std::vector<CGAL::SM_Vertex_index> source_list;
+            double dist = std::numeric_limits<double>::max();
+    
+            // Find the closest vertex to the target vertex from the begging of the branch
+            do {
+                // Get the target vertex of the half-edge
+                auto s = mesh.source(*circulator); // source vertex
+                source_list.push_back(s);
+
+                // Compute the distance between the source vertex and the target vertex
+                int comp = lx::Compare(mesh.point(s).z(), mesh.point(v0).z());
+                double x = mesh.point(v0).x() - mesh.point(s).x();
+                double y = mesh.point(v0).y() - mesh.point(s).y();
+                double dist1 = x * x + y * y;
+
+                if (vertices.size() == track)
+                {
+                    printf("\t[%zu] s (%u) %f %f %f comp (%d) dist1 (%f)\n", 
+                        source_list.size()-1, s.idx(), 
+                        mesh.point(s).x(), mesh.point(s).y(), mesh.point(s).z(), 
+                        comp, dist1);
+                }
+
+                // Update the target vertex if the source vertex is closer to the beginning of the branch
+                if (comp > 0)
+                {
+                    int comp_z = lx::Compare(mesh.point(s).z(), mesh.point(vt).z());
+                    if (vertices.size() == track)
+                    {
+                        double z_diff = mesh.point(s).z() - mesh.point(vt).z();
+                        printf("\t-- update vt z %e %e comp (%d) z_diff (%e) dist %f\n", 
+                            mesh.point(vt).z(), mesh.point(s).z(), 
+                            comp,
+                            z_diff, dist1);
+                    }
+                    int comp_dist = lx::Compare(dist1, dist);
+                    if ((comp_dist < 0) || ((comp_dist = 0) && (comp_z > 0)))
+                    {
+                        vt = s;
+                        dist = dist1;
+                        updated = true;
+                    }
+                }
+                ++circulator; // Move to next halfedge
+            } while (circulator != done); // iterate until the end of the loop
+
+            // Find the co-located vertex at the beginning of the branch
+            if (updated == false)
+            {
+                for (auto s : source_list)
+                {
+                    if (std::find(trace_list.begin(), trace_list.end(), s) == trace_list.end())
+                    {
+                        double x = mesh.point(v0).x() - mesh.point(s).x();
+                        double y = mesh.point(v0).y() - mesh.point(s).y();
+                        double z = mesh.point(v0).z() - mesh.point(s).z();
+                        double dist1 = x * x + y * y + z * z;
+                        if (lx::Compare(dist1, 0.0) == 0)
+                        {
+                            vt = s;
+                            updated = true;
+                            break;
+                        }
+                    }
+                }
+            }
+
+            printf("update %d vt0 (%d) vt (%d)\n", updated, v0.idx(), vt.idx());
+            if (updated == false)
+                break;
+            
+            trace_list.push_back(vt);
+        }
+
+        if (vertices.size() == track)
+        {
+            printf("** connect v %f %f %f vt %f %f %f size = %zu\n", 
+                mesh.point(v).x(), mesh.point(v).y(), mesh.point(v).z(), 
+                mesh.point(vt).x(), mesh.point(vt).y(), mesh.point(vt).z(), vertices.size());
+        }
+
+        axisPlane.FromPlane(pos1, mesh.point(vt).x(), mesh.point(vt).y(), z_ave);
+        m_poledit.NewVertex(pos1, &pntID);
+        vertices.push_back(pntID);
+
+        // Top vertices in vertices comes from the source vertices of the polygon
+        if (vertices.size() == total_points)
+            break;
+    }
+
+    // Split the inset vertices into the outer vertices and the loop vertices
+    std::vector<LXtPointID> inset_outer;
+    std::vector<std::vector<LXtPointID>> inset_loops;
+    SplitInsetVertices(vertices, source, loops, inset_outer, inset_loops);
+
+    LXtID4       type;
+    polygon.Type(&type);
+
+    LXtPolygonID polyID;
+    std::vector<LXtPointID> outer;
+
+    for (auto i = 0u; i < inset_outer.size(); i++)
+    {
+        printf("[%u] inset_outer %p\n", i, inset_outer[i]);
+        if ((i == 0) || (inset_outer[i] != inset_outer[i - 1] && inset_outer[i] != inset_outer[0]))
+            outer.push_back(inset_outer[i]);
+    }
+
+    for (auto i = 0u; i < source.size(); i++)
+    {
+        auto j = (i + 1) % source.size();
+        std::vector<LXtPointID> quads;
+        quads.push_back(source[i]);
+        quads.push_back(source[j]);
+        quads.push_back(inset_outer[j]);
+        if (inset_outer[i] != inset_outer[j])
+            quads.push_back(inset_outer[i]);
+        LXtPolygonID polyID;
+        polygon.NewProto(type, quads.data(), quads.size(), 0, &polyID);
+        sides.push_back(polyID);
+    }
+
+    printf("InsetPolygon vertices = %zu outer = %zu %zu loops = %zu\n", vertices.size(), inset_outer.size(), outer.size(), inset_loops.size());
+    if (inset_loops.size() == 0)
+    {
+        if (outer.size() > 2)
+        {
+            printf("** top polygons = %zu\n", outer.size());
+            polygon.NewProto(type, outer.data(), outer.size(), 0, &polyID);
+            pols.push_back(polyID);
+        }
+    }
+    else
+    {
+        std::vector<std::vector<LXtPointID>> holes;
+        for (auto i = 0u; i < inset_loops.size(); i++)
+        {
+            auto& inset_loop = inset_loops[i];
+            auto& loop = loops[i];
+        
+            std::vector<LXtPointID> hole;
+            for (auto i = 0u; i < inset_loop.size(); i++)
+            {
+                if ((i == 0) || (inset_loop[i] != inset_loop[i - 1] && inset_loop[i] != inset_loop[0]))
+                    hole.push_back(inset_loop[i]);
+            }
+            holes.push_back(hole);
+
+            for (auto i = 0u; i < loop.size(); i++)
+            {
+                auto j = (i + 1) % loop.size();
+                std::vector<LXtPointID> quads;
+                quads.push_back(loop[i]);
+                quads.push_back(loop[j]);
+                quads.push_back(inset_loop[j]);
+                if (inset_loop[i] != inset_loop[j])
+                    quads.push_back(inset_loop[i]);
+                LXtPolygonID polyID;
+                polygon.NewProto(type, quads.data(), quads.size(), 0, &polyID);
+                sides.push_back(polyID);
+            }
+        }
+        std::vector<LXtPointID> keyhole;
+        MeshUtil::MakeKeyhole(m_mesh, axisPlane, outer, holes, keyhole);
+        polygon.NewProto(type, keyhole.data(), keyhole.size(), 0, &polyID);
+        pols.push_back(polyID);
+    }
+
+#if 0
+    for (auto v : mesh.vertices())
+    {
+        LXtPointID pntID;
+        LXtVector  pos;
+        axisPlane.FromPlane(pos, mesh.point(v).x(), mesh.point(v).y(), mesh.point(v).z() * m_scale + z_ave);
+        m_poledit.NewVertex(pos, &pntID);
+        vertices[v] = pntID;
+        std::cout << "v:" << v << ")\n";
+        printf("point %f %f %f\n", mesh.point(v).x(), mesh.point(v).y(), mesh.point(v).z());
+
+        auto halfedge = mesh.halfedge(v); // 頂点に関連付けられたハーフエッジを取得
+        CGAL::Halfedge_around_target_circulator<SurfaceMesh> circulator(halfedge, mesh), done(circulator);
+        do {
+            // ハーフエッジ情報を出力
+            auto s = mesh.source(*circulator); // 始点の頂点
+            auto t = mesh.source(*circulator);
+
+            std::cout << "s:" << s << "t:" << t << "\n";
+            printf("halfedge source %f %f %f target %f %f %f\n", 
+                mesh.point(s).x(), mesh.point(s).y(), mesh.point(s).z(),
+                mesh.point(t).x(), mesh.point(t).y(), mesh.point(t).z());
+            ++circulator; // 次のハーフエッジへ移動
+        } while (circulator != done); // 循環終了条件
+    }
+#endif
+
+    polygon.Remove();
 
     return LXe_OK;
 }

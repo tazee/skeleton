@@ -25,7 +25,7 @@ enum EditMode : int
     Skeleton = 0,
     Extrude = 1,
     Duplicate = 2,
-    Offset = 3,
+    Inset = 3,
 };
 
 struct CSkeleton
@@ -65,6 +65,11 @@ struct CSkeleton
     // Offset polygon using straight-skeleton algorithm.
     //
     LxResult Offset(CLxUser_Polygon& polygon, std::vector<LXtPolygonID>& pols);
+
+    //
+    // Inset polygon using straight-skeleton algorithm.
+    //
+    LxResult Inset(CLxUser_Polygon& polygon, std::vector<LXtPolygonID>& pols, std::vector<LXtPolygonID>& sides);
 
     CLxUser_Mesh        m_mesh;
     CLxUser_PolygonEdit m_poledit;
@@ -213,8 +218,8 @@ public:
             result = m_skeleton.Extrude(m_poly, top_polygons, side_polygons);
         else if (m_mode == Duplicate)
             result = m_skeleton.Duplicate(m_poly, top_polygons);
-        else if (m_mode == Offset)
-            result = m_skeleton.Offset(m_poly, top_polygons);
+        else if (m_mode == Inset)
+            result = m_skeleton.Inset(m_poly, top_polygons, side_polygons);
     
         // check the result
         if (result != LXe_OK)

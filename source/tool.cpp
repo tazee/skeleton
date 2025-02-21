@@ -18,7 +18,7 @@ CTool::CTool()
         { Skeleton, "skeleton" }, 
         { Extrude, "extrude" }, 
         { Duplicate, "duplicate" }, 
-        { Offset, "offset" }, 
+        { Inset, "inset" }, 
         { 0, "=skeleton_mode" }, 0
     };
 
@@ -70,7 +70,7 @@ CTool::CTool()
 void CTool::tool_Reset()
 {
     CSkeleton ss;
-    dyna_Value(ATTRa_MODE).SetInt(Offset);
+    dyna_Value(ATTRa_MODE).SetInt(Inset);
     dyna_Value(ATTRa_OFFSET).SetFlt(ss.m_offset);
     dyna_Value(ATTRa_SHIFT).SetFlt(ss.m_shift);
     dyna_Value(ATTRa_STEPS).SetInt(ss.m_steps);
@@ -181,7 +181,7 @@ void CTool::tmod_Draw (ILxUnknownID vts, ILxUnknownID stroke, int flags)
     lx::MatrixIdent(mat);
     switch (mode)
     {
-        case Offset:
+        case Inset:
             if (m_part == HANDLE_OFFSET)
                 dFlags |= LXi_THANDf_HOT;
             handle.ScaleHandle(acen->v, mat, 0, HANDLE_OFFSET, m_offset0, 1, dFlags);
@@ -314,7 +314,7 @@ LxResult CTool::atrui_DisableMsg (unsigned int index, ILxUnknownID msg)
 
     switch (index) {
         case ATTRa_OFFSET:
-            if (mode != Offset && mode != Duplicate)
+            if (mode != Inset && mode != Duplicate)
             {
                 message.SetCode (LXe_DISABLED);
                 message.SetMessage ("tool.skeleton", "OnlyOffsetOrDuplicate", 0);
@@ -340,7 +340,7 @@ LxResult CTool::atrui_DisableMsg (unsigned int index, ILxUnknownID msg)
             }
             break;
         case ATTRa_MERGE:
-            if (mode != Offset)
+            if (mode != Inset)
             {
                 message.SetCode (LXe_DISABLED);
                 message.SetMessage ("tool.skeleton", "OnlyOffset", 0);
@@ -397,7 +397,7 @@ LxResult CTool::cui_Enabled (const char *channelName, ILxUnknownID msg_obj, ILxU
 
 	if (name == ATTRs_OFFSET)
     {
-        if ((chan_read.IValue (item, ATTRs_MODE) != Offset)
+        if ((chan_read.IValue (item, ATTRs_MODE) != Inset)
          && (chan_read.IValue (item, ATTRs_MODE) != Duplicate))
 		    return LXe_CMD_DISABLED;
     }
@@ -423,7 +423,7 @@ LxResult CTool::cui_Enabled (const char *channelName, ILxUnknownID msg_obj, ILxU
     }
 	else if (name == ATTRs_MERGE)
     {
-        if (chan_read.IValue (item, ATTRs_MODE) != Offset)
+        if (chan_read.IValue (item, ATTRs_MODE) != Inset)
 		    return LXe_CMD_DISABLED;
     }
 	
