@@ -25,7 +25,8 @@ enum EditMode : int
     Skeleton = 0,
     Extrude = 1,
     Duplicate = 2,
-    Inset = 3,
+    Offset = 3,
+    Inset = 4,
 };
 
 struct CSkeleton
@@ -102,7 +103,6 @@ public:
     CVisitor()
     {
         succeeded = true;
-        m_mode = Duplicate;
     }
 
     bool IsValid()
@@ -218,6 +218,8 @@ public:
             result = m_skeleton.Extrude(m_poly, top_polygons, side_polygons);
         else if (m_mode == Duplicate)
             result = m_skeleton.Duplicate(m_poly, top_polygons);
+        else if (m_mode == Offset)
+            result = m_skeleton.Offset(m_poly, top_polygons);
         else if (m_mode == Inset)
             result = m_skeleton.Inset(m_poly, top_polygons, side_polygons);
     

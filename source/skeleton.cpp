@@ -126,14 +126,14 @@ LxResult CSkeleton::Skeleton(CLxUser_Polygon& polygon, std::vector<LXtPolygonID>
     AxisTriangles axisTriangles(m_mesh, polygon);
     std::vector<double> weights;
 
-    int i = 0;
+//    int i = 0;
     for (auto v = skeleton->vertices_begin(); v != skeleton->vertices_end(); v++)
     {
         LXtPointID pntID;
         LXtVector  pos;
- //       printf("[%d] x = %f, y = %f contour (%d) skeleton (%d) split (%d)\n", 
- //           i++, v->point().x(), v->point().y(), v->is_contour(), v->is_skeleton(), v->is_split());
         axisPlane.FromPlane(pos, v->point().x(), v->point().y(), z_ave);
+//        printf("[%d] x = %f, y = %f contour (%d) skeleton (%d) split (%d) vert.new %f %f %f\n", 
+//            i++, v->point().x(), v->point().y(), v->is_contour(), v->is_skeleton(), v->is_split(), pos[0], pos[1], pos[2]);
         axisTriangles.MakePositionWeights(pos, weights);
         if (v->id() < source.size())
             pntID = source[v->id()];
@@ -758,7 +758,9 @@ LxResult CSkeleton::Offset(CLxUser_Polygon& polygon, std::vector<LXtPolygonID>& 
 }
 
 
-static void SplitInsetVertices(std::vector<LXtPointID>& vertices, std::vector<LXtPointID>& source, std::vector<std::vector<LXtPointID>>& loops, std::vector<LXtPointID>& inset_outer, std::vector<std::vector<LXtPointID>>& inset_loops)
+static void SplitInsetVertices(std::vector<LXtPointID>& vertices, 
+    std::vector<LXtPointID>& source, std::vector<std::vector<LXtPointID>>& loops, 
+    std::vector<LXtPointID>& inset_outer, std::vector<std::vector<LXtPointID>>& inset_loops)
 {
     inset_outer.clear();
     inset_loops.clear();
@@ -855,7 +857,6 @@ LxResult CSkeleton::Inset(CLxUser_Polygon& polygon, std::vector<LXtPolygonID>& p
     }
 
     // Store skeleton vertices for the source points of the polygon
-    auto track = -1;
     std::vector<CGAL::SM_Vertex_index> sm_source_verices;
 
     double z_max = 0.0;
@@ -881,13 +882,6 @@ LxResult CSkeleton::Inset(CLxUser_Polygon& polygon, std::vector<LXtPolygonID>& p
         while (lx::Compare(mesh.point(vt).z(), z_max) < 0)
         {
             bool updated = false;
-            if (vertices.size() == track)
-            {
-                axisPlane.FromPlane(pos1, mesh.point(vt).x(), mesh.point(vt).y(), z_ave);
-                printf("(%zu) new branch v0 (%u) z_max %f vt %f %f %f vert.new %f %f %f\n", 
-                    vertices.size(),  vt.idx(), z_max,
-                    mesh.point(vt).x(), mesh.point(vt).y(), mesh.point(vt).z(), pos1[0], pos1[1], pos1[2]);
-            }
 
             auto halfedge = mesh.halfedge(vt); // Get halfedge associated to the given vertex
             CGAL::Halfedge_around_target_circulator<SurfaceMesh> circulator(halfedge, mesh), done(circulator);
@@ -908,26 +902,10 @@ LxResult CSkeleton::Inset(CLxUser_Polygon& polygon, std::vector<LXtPolygonID>& p
                 double y = mesh.point(v0).y() - mesh.point(s).y();
                 double dist1 = x * x + y * y;
 
-                if (vertices.size() == track)
-                {
-                    printf("\t[%zu] s (%u) %f %f %f comp (%d) dist1 (%f)\n", 
-                        source_list.size()-1, s.idx(), 
-                        mesh.point(s).x(), mesh.point(s).y(), mesh.point(s).z(), 
-                        comp, dist1);
-                }
-
                 // Update the target vertex if the source vertex is closer to the beginning of the branch
                 if (comp > 0)
                 {
                     int comp_z = lx::Compare(mesh.point(s).z(), mesh.point(vt).z());
-                    if (vertices.size() == track)
-                    {
-                        double z_diff = mesh.point(s).z() - mesh.point(vt).z();
-                        printf("\t-- update vt z %e %e comp (%d) z_diff (%e) dist %f\n", 
-                            mesh.point(vt).z(), mesh.point(s).z(), 
-                            comp,
-                            z_diff, dist1);
-                    }
                     int comp_dist = lx::Compare(dist1, dist);
                     if ((comp_dist < 0) || ((comp_dist = 0) && (comp_z > 0)))
                     {
@@ -960,18 +938,10 @@ LxResult CSkeleton::Inset(CLxUser_Polygon& polygon, std::vector<LXtPolygonID>& p
                 }
             }
 
-            //printf("update %d vt0 (%d) vt (%d)\n", updated, v0.idx(), vt.idx());
             if (updated == false)
                 break;
             
             trace_list.push_back(vt);
-        }
-
-        if (vertices.size() == track)
-        {
-            printf("** connect v %f %f %f vt %f %f %f size = %zu\n", 
-                mesh.point(v).x(), mesh.point(v).y(), mesh.point(v).z(), 
-                mesh.point(vt).x(), mesh.point(vt).y(), mesh.point(vt).z(), vertices.size());
         }
 
         axisPlane.FromPlane(pos1, mesh.point(vt).x(), mesh.point(vt).y(), z_ave);
@@ -992,7 +962,6 @@ LxResult CSkeleton::Inset(CLxUser_Polygon& polygon, std::vector<LXtPolygonID>& p
 
     for (auto i = 0u; i < inset_outer.size(); i++)
     {
-        printf("[%u] inset_outer %p\n", i, inset_outer[i]);
         if ((i == 0) || (inset_outer[i] != inset_outer[i - 1] && inset_outer[i] != inset_outer[0]))
             outer.push_back(inset_outer[i]);
     }
