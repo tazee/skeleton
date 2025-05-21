@@ -581,6 +581,9 @@ static VertexIterator GetClosetVertex(AxisPlane& axisPlane, CLxUser_Point& point
 //
 static void MergePoints(CLxUser_Mesh& mesh, CLxUser_Polygon& polygon, AxisPlane& axisPlane, PolygonWithHolesPtrVector& offset_polygons, double z_ave)
 {
+    if (offset_polygons.size() == 0)
+        return;
+
     CLxUser_Point point;
     point.fromMesh(mesh);
 
